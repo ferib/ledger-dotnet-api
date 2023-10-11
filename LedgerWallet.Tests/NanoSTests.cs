@@ -165,5 +165,58 @@ namespace LedgerWallet.Tests
 
             await Task.WhenAll(tasks);
         }
+
+        [Fact]
+        [Trait("Manual", "Manual")]
+        public async Task CanSignMultipleTransactionOutputs()
+        {
+            var ledger = (await LedgerClient.GetHIDLedgersAsync()).First();
+
+            var walletPubKey = await ledger.GetWalletPubKeyAsync(new KeyPath("1'/0"));
+            var address = walletPubKey.GetAddress(network);
+
+            var walletPubKey2 = await ledger.GetWalletPubKeyAsync(new KeyPath("1'/1"));
+            var changeAddress = walletPubKey2.GetAddress(network);
+
+            var funding = network.Consensus.ConsensusFactory.CreateTransaction();
+            funding.Inputs.Add(network.GetGenesis().Transactions[0].Inputs[0]);
+            funding.Outputs.Add(new TxOut(Money.Coins(5m), address));
+            funding.Outputs.Add(new TxOut(Money.Coins(0.4m), address));
+            funding.Outputs.Add(new TxOut(Money.Coins(0.6m), address));
+
+            var coins = funding.Outputs.AsCoins();
+
+            var spending = network.Consensus.ConsensusFactory.CreateTransaction();
+            spending.LockTime = 1;
+            spending.Inputs.AddRange(coins.Select(o => new TxIn(o.Outpoint, o.ScriptPubKey)));
+
+            // NOTE: having 3+ will promt for suspicious path, but won't sign anything :( 
+            spending.Outputs.Add(new TxOut(Money.Coins(1m), BitcoinAddress.Create("bc1qc8h9tmkejfzzky79euxx5acmv9xthmcnk9df0m", Network.Main)));
+            spending.Outputs.Add(new TxOut(Money.Coins(1m), BitcoinAddress.Create("bc1qve2w630azhahrhtmu047prnjjzxy2rymtd06na", Network.Main)));
+            spending.Outputs.Add(new TxOut(Money.Coins(1m), BitcoinAddress.Create("bc1qdj59eexd2ggf4qa7u4n3fx9anurs5ad92d2jp3", Network.Main)));
+
+            spending.Outputs.Add(new TxOut(Money.Zero, TxNullDataTemplate.Instance.GenerateScriptPubKey(new byte[] { 1, 2 })));
+
+            var tasks = new List<Task>();
+
+            for (var i = 0; i < 5; i++)
+            {
+                var signed = ledger.SignTransactionAsync(
+                  new KeyPath("1'/0"),
+                  new Coin[]
+                {
+                new Coin(funding, 0),
+                new Coin(funding, 1),
+                new Coin(funding, 2),
+                }, new Transaction[]
+                {
+                funding
+                }, spending, new KeyPath("1'/1"));
+
+                tasks.Add(signed);
+            }
+
+            await Task.WhenAll(tasks);
+        }
     }
 }
